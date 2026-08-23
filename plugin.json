@@ -1,0 +1,18 @@
+{
+  "ID": "03B5849AB8264F58BC8817772EEBE19D",
+  "Name": "Caffeine",
+  "Type": "Plugin",
+  "Description": "Keep Caffeine and PowerToys Awake active until 5pm, turn them off, or run both for a set duration",
+  "Author": "admin",
+  "Version": "1.0.0",
+  "Language": "csharp",
+  "Website": "https://aka.ms/powertoys",
+  "ActionKeyword": "caff",
+  "IsGlobal": false,
+  "ExecuteFileName": "Community.PowerToys.Run.Plugin.Caffeine.dll",
+  "AssemblyPath": "Community.PowerToys.Run.Plugin.Caffeine.dll",
+  "IcoPathDark": "Images/icon.png",
+  "IcoPathLight": "Images/icon.png",
+  "IcoPath": "Images/icon.png",
+  "DynamicLoading": false
+}
