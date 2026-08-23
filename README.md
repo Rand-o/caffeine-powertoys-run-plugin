@@ -1,11 +1,13 @@
 # Caffeine — PowerToys Run plugin
 
-Keeps a work laptop awake with **Caffeine** ([Zhorn Software](https://www.zhornsoftware.co.uk/caffeine/)) —
-`caffeine64.exe` from the user's **Music folder** (simulates a keypress every
-59 s so Windows never sleeps/locks).
+Keeps a work laptop awake with **two independent tools at once**:
 
-> **PowerToys Awake support is being redesigned** and is not present in the
-> current build. The plugin currently controls Caffeine only.
+- **Caffeine** ([Zhorn Software](https://www.zhornsoftware.co.uk/caffeine/)) —
+  `caffeine64.exe` from the user's **Music folder** (simulates a keypress every
+  59 s so Windows never sleeps/locks)
+- **PowerToys Awake** (the PowerToys module that overrides system sleep)
+
+Both are turned on and off together by one keyword.
 
 ## Usage
 
@@ -14,17 +16,18 @@ Type in PowerToys Run (default shortcut `Alt+Space`):
 | Query | What happens |
 | --- | --- |
 | `caff` | Shows usage hints |
-| `caff on` | Caffeine active **until 5:00 PM** — no matter the current time (before 5pm → today, after 5pm → tomorrow). Caffeine is started if it isn't running, or its timer is reset if it is. |
-| `caff off` | Deactivates Caffeine (the app stays in the tray in its inactive state — it is **not** closed). |
-| `caff 1:30` | Caffeine active for **1 hour 30 minutes**, then stops on its own. |
-| `caff 2` | Caffeine active for **2 hours** (a bare number is hours). |
+| `caff on` | Caffeine + Awake active **until 5:00 PM** — no matter the current time (before 5pm → today, after 5pm → tomorrow). Caffeine is started if it isn't running, or its timer is reset if it is. |
+| `caff off` | Deactivates Caffeine (the app stays in the tray in its inactive state — it is **not** closed) and turns PowerToys Awake off (its session becomes inactive; the process keeps running and its tray icon greys out — the plugin **never** closes Awake). |
+| `caff 1:30` | Both active for **1 hour 30 minutes**, then stop on their own. |
+| `caff 2` | Both active for **2 hours** (a bare number is hours). |
 
 Duration format: `H:MM` or bare hours, 1 minute to 30 days.
 
-A toast confirms every action; failures (missing exe) show a notification and
-leave Run open.
+A toast confirms every action; failures show a notification and leave Run open.
 
 ## How it works
+
+### Caffeine (Zhorn)
 
 | Command | Caffeine switch(es) |
 | --- | --- |
@@ -36,6 +39,46 @@ If an instance is already running, `-replace` is added so the old instance is
 closed and the new timer takes effect. The exe is located at
 `%USERPROFILE%\Music\caffeine64.exe` (via the `MyMusic` known folder, so
 OneDrive redirects are honored).
+
+### PowerToys Awake
+
+The plugin controls Awake **exclusively through the Awake module's settings
+file** — the same channel PowerToys' own `AwakeService` uses (verified against
+the PowerToys v0.100.x source):
+
+- With the Awake module enabled, the PowerToys runner keeps a **windowless**
+  `PowerToys.Awake.exe` instance running (`--use-pt-config --pid <runner
+  pid>`). That instance watches its settings file with a ~25 ms throttle and
+  applies whatever mode the file holds.
+- The plugin simply writes the file (preserving `keepDisplayOn` /
+  `customTrayTimes` from the existing one):
+  - `caff on` → `mode: 3` (EXPIRABLE) + `expirationDateTime` = 5:00 PM
+  - `caff <time>` → `mode: 2` (TIMED) + `intervalHours` / `intervalMinutes`
+  - `caff off` → `mode: 0` (PASSIVE)
+- **The plugin never launches or closes an Awake process.** If no
+  `PowerToys.Awake.exe` is running, `caff on` / `caff <time>` report that and
+  Caffeine still works.
+- **Self-check:** after each write the plugin waits a second and verifies the
+  Awake process is still alive. If it exited, the toast says so explicitly —
+  per the PowerToys source the tray icon can only disappear if the process
+  exits (in passive mode it just greys out).
+
+**One-time setup:** the Awake module must be enabled in PowerToys
+(PowerToys Settings → Awake → *Enable Awake*). That's what starts the
+windowless instance that watches the file. If you ever start
+`PowerToys.Awake.exe` manually from a terminal, close that window — a
+manually started instance doesn't watch the settings file.
+
+**Tray icon:** while the module is enabled the Awake process never exits, so
+the icon is always visible:
+
+- `caff on` / `caff <time>` → active icon (tooltip shows the expiry time or a
+  live countdown)
+- `caff off` → disabled (greyed) icon — still in the tray
+
+If you don't see it, Windows 11 likely parked it in the hidden-icons overflow
+(`^` next to the clock) — drag it out, or enable *PowerToys Awake* under
+Settings → Personalization → Taskbar → *Other system tray icons*.
 
 ## Building (Linux cross-compile)
 
@@ -69,4 +112,10 @@ only), then produces:
 - `caff off` deactivates Caffeine with `-appoff` — the app stays in the tray
   (empty cup) and can be re-activated with `caff on` or by double-clicking
   the tray icon. Timed sessions (`caff 1:30`) auto-exit the app instead.
+- The Awake part needs the **Awake module enabled** in PowerToys (one-time).
+  While it's disabled, the Awake side of `caff on`/`caff <time>` reports that
+  and Caffeine still works.
+- Works with PowerToys v0.100.x+ (new settings location) and older versions
+  that use `%LOCALAPPDATA%\PowerToys\settings\Awake.json` (the existing file
+  is auto-detected).
 - Targets `net9.0-windows`; requires a .NET 9-era PowerToys (0.9x+).
