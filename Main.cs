@@ -315,12 +315,30 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
         }
 
         // Module settings file, as resolved by PowerToys' SettingPath in v0.100.x+.
-        private static string AwakeSettingsDir =>
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Microsoft", "PowerToys", "Awake");
+        // Awake module settings file, per PowerToys version:
+        //   v0.100.x+ : %LOCALAPPDATA%\Microsoft\PowerToys\Awake\settings.json
+        //   older     : %LOCALAPPDATA%\PowerToys\settings\Awake.json
+        // Prefers the newer location; falls back to the older one when it exists.
+        private static string AwakeSettingsPath
+        {
+            get
+            {
+                string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                string newPath = Path.Combine(local, "Microsoft", "PowerToys", "Awake", "settings.json");
+                if (File.Exists(newPath))
+                {
+                    return newPath;
+                }
 
-        private static string AwakeSettingsPath => Path.Combine(AwakeSettingsDir, "settings.json");
+                string oldPath = Path.Combine(local, "PowerToys", "settings", "Awake.json");
+                if (File.Exists(oldPath))
+                {
+                    return oldPath;
+                }
+
+                return newPath; // default for current PowerToys
+            }
+        }
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -368,17 +386,18 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
         {
             try
             {
-                if (!Directory.Exists(AwakeSettingsDir))
+                string path = AwakeSettingsPath;
+                if (!Directory.Exists(Path.GetDirectoryName(path)))
                 {
                     return false;
                 }
 
                 AwakeSettingsFile settings = new();
-                if (File.Exists(AwakeSettingsPath))
+                if (File.Exists(path))
                 {
                     try
                     {
-                        AwakeSettingsFile loaded = JsonSerializer.Deserialize<AwakeSettingsFile>(File.ReadAllText(AwakeSettingsPath));
+                        AwakeSettingsFile loaded = JsonSerializer.Deserialize<AwakeSettingsFile>(File.ReadAllText(path));
                         if (loaded?.Properties != null)
                         {
                             settings = loaded;
@@ -391,7 +410,7 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
                 }
 
                 mutate(settings.Properties);
-                File.WriteAllText(AwakeSettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+                File.WriteAllText(path, JsonSerializer.Serialize(settings, JsonOptions));
                 return true;
             }
             catch (Exception e)
@@ -413,7 +432,7 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
 
             if (!configManaged)
             {
-                return "a manually started PowerToys Awake instance is running — close its window (or use caff off), then try again";
+                return "a manually started PowerToys Awake instance is running — close its window, then try again";
             }
 
             // Steer the runner-managed instance through the settings file it watches.
@@ -437,7 +456,7 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
 
             if (!configManaged)
             {
-                return "a manually started PowerToys Awake instance is running — close its window (or use caff off), then try again";
+                return "a manually started PowerToys Awake instance is running — close its window, then try again";
             }
 
             bool ok = UpdateAwakeSettings(p =>
@@ -450,46 +469,34 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
         }
 
         // Awake "off". Returns null on success, an error message otherwise.
+        // Never closes an Awake process: a running instance is only switched to
+        // its inactive (PASSIVE) state.
         private string AwakeOff()
         {
             int pid = GetAwakeInstance(out bool configManaged);
 
-            if (pid == 0)
+            if (pid > 0 && !configManaged)
             {
-                // Nothing running: clear the stored state so a (re)started module stays off.
-                UpdateAwakeSettings(p =>
-                {
-                    p.Mode = AwakeModePassive;
-                });
+                // A manually started instance (e.g. from a terminal) watches no
+                // settings file. This plugin never closes Awake processes — the
+                // user has to close that instance's window themselves.
+                return "a manually started PowerToys Awake instance is still running — close its window to stop it (this plugin never closes Awake)";
+            }
+
+            if (pid == 0 && !File.Exists(AwakeSettingsPath))
+            {
+                // No Awake instance and no module settings: nothing to do.
                 return null;
             }
 
-            if (!configManaged)
-            {
-                // A standalone instance (e.g. started from a terminal) watches no
-                // settings file — the only way to stop it is to kill it.
-                KillProcess(pid, "PowerToys.Awake");
-                return null;
-            }
-
+            // Runner-managed instance (or nothing running): set the stored state
+            // to PASSIVE. A running instance picks it up and goes inactive — it
+            // keeps running; a (re)started module comes up inactive.
             bool ok = UpdateAwakeSettings(p =>
             {
                 p.Mode = AwakeModePassive;
             });
             return ok ? null : "could not update the PowerToys Awake settings file";
-        }
-
-        private static void KillProcess(int pid, string name)
-        {
-            try
-            {
-                using Process p = Process.GetProcessById(pid);
-                p.Kill();
-            }
-            catch (Exception e)
-            {
-                Log.Exception($"Failed to kill {name} (pid {pid})", e, typeof(Main));
-            }
         }
 
         // --- Win32 interop ---

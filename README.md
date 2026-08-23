@@ -17,7 +17,7 @@ Type in PowerToys Run (default shortcut `Alt+Space`):
 | --- | --- |
 | `caff` | Shows usage hints |
 | `caff on` | Caffeine + Awake active **until 5:00 PM** — no matter the current time (before 5pm → today, after 5pm → tomorrow). Caffeine is started if it isn't running, or its timer is reset if it is. |
-| `caff off` | Deactivates Caffeine (the app stays in the tray in its inactive state — it is **not** closed) and turns PowerToys Awake off. |
+| `caff off` | Deactivates Caffeine (the app stays in the tray in its inactive state — it is **not** closed) and turns PowerToys Awake off (its session becomes inactive; the process keeps running — the plugin **never** closes Awake). |
 | `caff 1:30` | Both active for **1 hour 30 minutes**, then stop on their own. |
 | `caff 2` | Both active for **2 hours** (a bare number is hours). |
 
@@ -67,8 +67,9 @@ So the plugin simply writes the file, preserving `keepDisplayOn` /
 The running instance is identified by process name; its command line (via
 `NtQueryInformationProcess`) is checked for `-c`/`--use-pt-config` to tell a
 runner-managed instance apart from a manually started one. A manually started
-instance (with its own console window) can't be steered through the file:
-`caff off` kills it, `caff on`/`caff <time>` ask you to close it first.
+instance (with its own console window) can't be steered through the file, and
+the plugin never closes Awake processes: `caff off` tells you to close its
+window, and `caff on`/`caff <time>` ask you to close it first.
 
 **One-time setup:** the Awake module must be enabled in PowerToys
 (PowerToys Settings → Awake → *Enable Awake*, or the Awake tray icon →
@@ -110,8 +111,11 @@ only), then produces:
 - The Awake part needs the **Awake module enabled** in PowerToys (one-time).
   While it's disabled, the Awake side of `caff on`/`caff <time>` reports that
   and Caffeine still works.
-- If you ever start `PowerToys.Awake.exe` manually from a terminal, `caff off`
-  kills that instance; `caff on` asks you to close it first.
-- Requires PowerToys v0.100.x+ (settings path and schema verified for
-  v0.100.x and v0.101.x).
+- If you ever start `PowerToys.Awake.exe` manually from a terminal, the plugin
+  leaves it alone and tells you to close its window (it never closes Awake).
+  Same for a standalone instance left behind by an older version of this
+  plugin — close its console window once.
+- Works with PowerToys v0.100.x+ (new settings location) and older versions
+  that use `%LOCALAPPDATA%\PowerToys\settings\Awake.json` (the existing file
+  is auto-detected).
 - Targets `net9.0-windows`; requires a .NET 9-era PowerToys (0.9x+).
