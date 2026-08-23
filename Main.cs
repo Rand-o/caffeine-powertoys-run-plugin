@@ -5,8 +5,6 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading;
-using System.Threading.Tasks;
 using Wox.Plugin;
 using Wox.Plugin.Logger;
 
@@ -18,19 +16,20 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
     ///  1. Caffeine (Zhorn Software, caffeine64.exe from the user's Music folder):
     ///     - caff on      -> -activefor:&lt;minutes until 17:00&gt;  (active until 5pm)
     ///     - caff &lt;time&gt;  -> -exitafter:&lt;minutes&gt;               (auto-exits after the duration)
-    ///     - caff off     -> -appexit                            (terminates the running instance)
+    ///     - caff off     -> -appoff                             (deactivates; app stays in tray, inactive)
     ///     A running instance is always replaced (-replace) so the timer is reset.
     ///
-    ///  2. PowerToys Awake (v0.75+ CLI: -t seconds / -e datetime / -c config-watch):
-    ///     - If a config-managed instance is running (launched by the PowerToys runner
-    ///       with --use-pt-config), it is steered by writing %LOCALAPPDATA%\PowerToys\
-    ///       settings\Awake.json (the same channel the runner itself uses):
+    ///  2. PowerToys Awake (v0.100.x+):
+    ///     Controlled exclusively through %LOCALAPPDATA%\Microsoft\PowerToys\Awake\
+    ///     settings.json — the same channel PowerToys' own AwakeService uses. The
+    ///     runner-managed instance (Awake module enabled in PowerToys) watches that
+    ///     file and runs without any console window. This plugin never launches an
+    ///     Awake process itself:
     ///         mode 3 (EXPIRABLE) + expirationDateTime  -> "on until 5pm"
     ///         mode 2 (TIMED) + intervalHours/Minutes   -> "on for &lt;duration&gt;"
     ///         mode 0 (PASSIVE)                         -> "off"
-    ///     - Otherwise a standalone instance is launched with -t &lt;seconds&gt;. A
-    ///       standalone Awake (no PID binding) calls AllocConsole(), so its console
-    ///       window is hidden in the background.
+    ///     If the module is disabled (no running instance), a notification tells the
+    ///     user to enable it in PowerToys first.
     /// </summary>
     public class Main : IPlugin
     {
@@ -89,7 +88,7 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
 
                     return Single(
                         "Caffeine + Awake OFF",
-                        "Stops the Caffeine session and turns PowerToys Awake off — Enter to deactivate",
+                        "Deactivates Caffeine (app stays in tray, inactive) and turns PowerToys Awake off — Enter to deactivate",
                         () => DeactivateAll());
 
                 default:
@@ -186,9 +185,9 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
             var errors = new List<string>();
 
             bool caffeineWasRunning = IsCaffeineRunning();
-            if (caffeineWasRunning && StartCaffeine("-appexit") == null)
+            if (caffeineWasRunning && StartCaffeine("-appoff") == null)
             {
-                errors.Add("failed to stop Caffeine");
+                errors.Add("failed to deactivate Caffeine");
             }
 
             string awakeError = AwakeOff();
@@ -203,7 +202,7 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
                 return false;
             }
 
-            string caffeineState = caffeineWasRunning ? "Caffeine stopped" : "Caffeine was not running";
+            string caffeineState = caffeineWasRunning ? "Caffeine deactivated" : "Caffeine was not running";
             _context.API.ShowMsg("Caffeine", $"{caffeineState} · PowerToys Awake off");
             return true;
         }
@@ -265,26 +264,23 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
 
         // --- PowerToys Awake ---
 
-        // Returns the path to PowerToys.Awake.exe (null if not found) and, when an
-        // instance is already running, its process id.
-        private static string FindAwakeExe(out int runningPid)
+        // Returns the pid of the running PowerToys.Awake instance (0 when none) and
+        // whether it was started with -c/--use-pt-config (the way the PowerToys
+        // runner starts it — such an instance watches the settings file).
+        private static int GetAwakeInstance(out bool configManaged)
         {
-            runningPid = 0;
+            configManaged = false;
             Process[] procs = Process.GetProcessesByName("PowerToys.Awake");
             try
             {
-                if (procs.Length > 0)
+                if (procs.Length == 0)
                 {
-                    runningPid = procs[0].Id;
-                    try
-                    {
-                        return procs[0].MainModule?.FileName;
-                    }
-                    catch
-                    {
-                        // Access denied etc. — fall through to the disk search.
-                    }
+                    return 0;
                 }
+
+                int pid = procs[0].Id;
+                configManaged = IsConfigManaged(pid);
+                return pid;
             }
             finally
             {
@@ -293,56 +289,6 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
                     p.Dispose();
                 }
             }
-
-            // Per-user install: %LOCALAPPDATA%\Microsoft\PowerToys\<version>\
-            // System-wide install: C:\Program Files\PowerToys\<version>\
-            string bestDir = null;
-            Version bestVersion = null;
-            string[] roots =
-            {
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "PowerToys"),
-                @"C:\Program Files\PowerToys"
-            };
-
-            foreach (string root in roots)
-            {
-                if (!Directory.Exists(root))
-                {
-                    continue;
-                }
-
-                string[] dirs;
-                try
-                {
-                    dirs = Directory.GetDirectories(root);
-                }
-                catch
-                {
-                    continue;
-                }
-
-                foreach (string dir in dirs)
-                {
-                    string name = Path.GetFileName(dir).TrimStart('v');
-                    if (!Version.TryParse(name, out Version v))
-                    {
-                        continue;
-                    }
-
-                    if (!File.Exists(Path.Combine(dir, "PowerToys.Awake.exe")))
-                    {
-                        continue;
-                    }
-
-                    if (bestVersion == null || v > bestVersion)
-                    {
-                        bestVersion = v;
-                        bestDir = dir;
-                    }
-                }
-            }
-
-            return bestDir == null ? null : Path.Combine(bestDir, "PowerToys.Awake.exe");
         }
 
         // True when the running instance was started with -c/--use-pt-config (the way
@@ -368,12 +314,13 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
             return false;
         }
 
+        // Module settings file, as resolved by PowerToys' SettingPath in v0.100.x+.
         private static string AwakeSettingsDir =>
             Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "PowerToys", "settings");
+                "Microsoft", "PowerToys", "Awake");
 
-        private static string AwakeSettingsPath => Path.Combine(AwakeSettingsDir, "Awake.json");
+        private static string AwakeSettingsPath => Path.Combine(AwakeSettingsDir, "settings.json");
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -414,7 +361,7 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
             public Dictionary<string, uint> CustomTrayTimes { get; set; } = new();
         }
 
-        // Reads the existing Awake.json (preserving the user's keepDisplayOn /
+        // Reads the existing settings.json (preserving the user's keepDisplayOn /
         // customTrayTimes), applies the mutation, and writes it back. Returns false
         // when the PowerToys settings folder does not exist or the write failed.
         private static bool UpdateAwakeSettings(Action<AwakeSettingsProperties> mutate)
@@ -457,140 +404,79 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
         // Awake "on until <end>". Returns null on success, an error message otherwise.
         private string AwakeOnUntil(DateTime end)
         {
-            int pid = 0;
-            string exe = FindAwakeExe(out pid);
+            int pid = GetAwakeInstance(out bool configManaged);
 
-            if (pid > 0 && IsConfigManaged(pid))
+            if (pid == 0)
             {
-                // Runner-managed instance: steer it through the settings file.
-                bool ok = UpdateAwakeSettings(p =>
-                {
-                    p.Mode = AwakeModeExpirable;
-                    p.ExpirationDateTime = new DateTimeOffset(end);
-                });
-                return ok ? null : "could not update the PowerToys Awake settings file";
+                return "PowerToys Awake is not running — enable the Awake module in PowerToys (Settings > Awake), then try again";
             }
 
-            if (exe == null)
+            if (!configManaged)
             {
-                return "PowerToys.Awake.exe not found — is PowerToys installed?";
+                return "a manually started PowerToys Awake instance is running — close its window (or use caff off), then try again";
             }
 
-            if (pid > 0)
-            {
-                // Replace a standalone instance left over from an earlier "caff".
-                KillProcess(pid, "PowerToys.Awake");
-            }
-
-            // Best effort: keep the module's stored state consistent too.
-            UpdateAwakeSettings(p =>
+            // Steer the runner-managed instance through the settings file it watches.
+            bool ok = UpdateAwakeSettings(p =>
             {
                 p.Mode = AwakeModeExpirable;
                 p.ExpirationDateTime = new DateTimeOffset(end);
             });
-
-            long seconds = (long)Math.Max(1, Math.Ceiling((end - DateTime.Now).TotalSeconds));
-            Process started = LaunchAwake(exe, $"-t {seconds}");
-            if (started == null)
-            {
-                return "failed to launch PowerToys.Awake.exe";
-            }
-
-            HideConsoleWindow(started.Id);
-            return null;
+            return ok ? null : "could not update the PowerToys Awake settings file";
         }
 
         // Awake "on for <duration>". Returns null on success, an error message otherwise.
         private string AwakeOnTimed(TimeSpan duration)
         {
-            int pid = 0;
-            string exe = FindAwakeExe(out pid);
+            int pid = GetAwakeInstance(out bool configManaged);
 
-            if (pid > 0 && IsConfigManaged(pid))
+            if (pid == 0)
             {
-                bool ok = UpdateAwakeSettings(p =>
-                {
-                    p.Mode = AwakeModeTimed;
-                    p.IntervalHours = (uint)duration.Hours;
-                    p.IntervalMinutes = (uint)duration.Minutes;
-                });
-                return ok ? null : "could not update the PowerToys Awake settings file";
+                return "PowerToys Awake is not running — enable the Awake module in PowerToys (Settings > Awake), then try again";
             }
 
-            if (exe == null)
+            if (!configManaged)
             {
-                return "PowerToys.Awake.exe not found — is PowerToys installed?";
+                return "a manually started PowerToys Awake instance is running — close its window (or use caff off), then try again";
             }
 
-            if (pid > 0)
-            {
-                KillProcess(pid, "PowerToys.Awake");
-            }
-
-            UpdateAwakeSettings(p =>
+            bool ok = UpdateAwakeSettings(p =>
             {
                 p.Mode = AwakeModeTimed;
                 p.IntervalHours = (uint)duration.Hours;
                 p.IntervalMinutes = (uint)duration.Minutes;
             });
-
-            long seconds = (long)Math.Max(1, Math.Ceiling(duration.TotalSeconds));
-            Process started = LaunchAwake(exe, $"-t {seconds}");
-            if (started == null)
-            {
-                return "failed to launch PowerToys.Awake.exe";
-            }
-
-            HideConsoleWindow(started.Id);
-            return null;
+            return ok ? null : "could not update the PowerToys Awake settings file";
         }
 
         // Awake "off". Returns null on success, an error message otherwise.
         private string AwakeOff()
         {
-            int pid = 0;
-            FindAwakeExe(out pid);
+            int pid = GetAwakeInstance(out bool configManaged);
 
-            if (pid > 0)
+            if (pid == 0)
             {
-                if (IsConfigManaged(pid))
+                // Nothing running: clear the stored state so a (re)started module stays off.
+                UpdateAwakeSettings(p =>
                 {
-                    bool ok = UpdateAwakeSettings(p =>
-                    {
-                        p.Mode = AwakeModePassive;
-                    });
-                    return ok ? null : "could not update the PowerToys Awake settings file";
-                }
+                    p.Mode = AwakeModePassive;
+                });
+                return null;
+            }
 
+            if (!configManaged)
+            {
+                // A standalone instance (e.g. started from a terminal) watches no
+                // settings file — the only way to stop it is to kill it.
                 KillProcess(pid, "PowerToys.Awake");
                 return null;
             }
 
-            // Nothing running: clear the stored state so a (re)started module stays off.
-            UpdateAwakeSettings(p =>
+            bool ok = UpdateAwakeSettings(p =>
             {
                 p.Mode = AwakeModePassive;
             });
-            return null;
-        }
-
-        // Returns the started process, or null on failure.
-        private static Process LaunchAwake(string exe, string arguments)
-        {
-            try
-            {
-                return Process.Start(new ProcessStartInfo
-                {
-                    FileName = exe,
-                    Arguments = arguments,
-                    UseShellExecute = false
-                });
-            }
-            catch (Exception e)
-            {
-                Log.Exception("Failed to launch PowerToys.Awake", e, typeof(Main));
-                return null;
-            }
+            return ok ? null : "could not update the PowerToys Awake settings file";
         }
 
         private static void KillProcess(int pid, string name)
@@ -606,60 +492,7 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
             }
         }
 
-        // A standalone Awake (started without a PID binding) calls AllocConsole(),
-        // which shows a console window for the whole session. Best-effort: find the
-        // process's top-level window and hide it. Runs on a background thread.
-        private static void HideConsoleWindow(int pid)
-        {
-            Task.Run(() =>
-            {
-                try
-                {
-                    long deadline = Environment.TickCount64 + 5000;
-                    while (Environment.TickCount64 < deadline)
-                    {
-                        bool hidden = false;
-                        EnumWindows((hWnd, _) =>
-                        {
-                            if (GetWindowThreadProcessId(hWnd, out uint procId) == (uint)pid)
-                            {
-                                ShowWindow(hWnd, SW_HIDE);
-                                hidden = true;
-                                return false;
-                            }
-
-                            return true;
-                        }, IntPtr.Zero);
-
-                        if (hidden)
-                        {
-                            return;
-                        }
-
-                        Thread.Sleep(100);
-                    }
-                }
-                catch
-                {
-                    // Cosmetic only — never break the plugin over a hidden window.
-                }
-            });
-        }
-
         // --- Win32 interop ---
-
-        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-        [DllImport("user32.dll")]
-        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-
-        [DllImport("user32.dll")]
-        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-
-        [DllImport("user32.dll")]
-        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-
-        private const int SW_HIDE = 0;
 
         private const int ProcessQueryLimitedInformation = 0x1000;
         private const int ProcessCommandLineInformation = 60;

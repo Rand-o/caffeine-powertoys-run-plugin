@@ -17,7 +17,7 @@ Type in PowerToys Run (default shortcut `Alt+Space`):
 | --- | --- |
 | `caff` | Shows usage hints |
 | `caff on` | Caffeine + Awake active **until 5:00 PM** — no matter the current time (before 5pm → today, after 5pm → tomorrow). Caffeine is started if it isn't running, or its timer is reset if it is. |
-| `caff off` | Stops the Caffeine session entirely (terminates `caffeine64.exe`) and turns PowerToys Awake off. |
+| `caff off` | Deactivates Caffeine (the app stays in the tray in its inactive state — it is **not** closed) and turns PowerToys Awake off. |
 | `caff 1:30` | Both active for **1 hour 30 minutes**, then stop on their own. |
 | `caff 2` | Both active for **2 hours** (a bare number is hours). |
 
@@ -34,7 +34,7 @@ show a notification and leave Run open.
 | --- | --- |
 | `caff on` | `-activefor:<minutes until 17:00>` (app becomes inactive at 5pm; stays in tray) |
 | `caff <time>` | `-exitafter:<minutes>` (app auto-exits after the duration) |
-| `caff off` | `-appexit` (terminates the running instance) |
+| `caff off` | `-appoff` (deactivates the running instance; the app stays in the tray, inactive) |
 
 If an instance is already running, `-replace` is added so the old instance is
 closed and the new timer takes effect. The exe is located at
@@ -43,36 +43,37 @@ OneDrive redirects are honored).
 
 ### PowerToys Awake
 
-Verified against the PowerToys v0.100.x source (same CLI since v0.75):
+Verified against the PowerToys v0.100.x/v0.101.x source:
 
-- CLI: `PowerToys.Awake.exe -t <seconds>` (timed), `-e <datetime>`
-  (expirable), `-c/--use-pt-config` (watch the settings file). Awake enforces
-  **one instance** via a named mutex.
-- When the Awake module is enabled in PowerToys, the runner launches it with
-  `--use-pt-config --pid <runner pid>` and steers it by writing
-  `%LOCALAPPDATA%\PowerToys\settings\Awake.json` — the same channel the
-  runner's own `AwakeService` uses.
+- When the Awake module is enabled, the runner launches
+  `PowerToys.Awake.exe --use-pt-config --pid <runner pid>`. That instance has
+  **no console window** and watches its settings file
+  (`%LOCALAPPDATA%\Microsoft\PowerToys\Awake\settings.json`, resolved by
+  PowerToys' `SettingPath`) with a ~25 ms throttle.
+- Writing that file is exactly how PowerToys' own `AwakeService` (the
+  runner's module-control layer) steers Awake — the plugin uses the same
+  channel. **The plugin never launches an Awake process itself.**
+  (A standalone `PowerToys.Awake.exe -t …` is deliberately avoided: without a
+  PID binding, Awake calls `AllocConsole()` and keeps a console window open
+  for the whole session — there is no flag to prevent that in any version.)
 
-The plugin does the same:
+So the plugin simply writes the file, preserving `keepDisplayOn` /
+`customTrayTimes` from the existing one:
 
-1. **Config-managed instance running** (command line contains `-c` /
-   `--use-pt-config`, detected via `NtQueryInformationProcess`):
-   - `caff on` → write `mode: 3` (EXPIRABLE) + `expirationDateTime` = 5:00 PM
-   - `caff <time>` → write `mode: 2` (TIMED) + `intervalHours` / `intervalMinutes`
-   - `caff off` → write `mode: 0` (PASSIVE)
+- `caff on` → `mode: 3` (EXPIRABLE) + `expirationDateTime` = 5:00 PM
+- `caff <time>` → `mode: 2` (TIMED) + `intervalHours` / `intervalMinutes`
+- `caff off` → `mode: 0` (PASSIVE)
 
-   The existing file is read first, so the user's `keepDisplayOn` and
-   `customTrayTimes` settings are preserved.
-2. **Standalone instance running** (e.g. left over from an earlier `caff`):
-   killed and replaced.
-3. **No instance running**: the settings file is updated (best effort) and a
-   standalone `PowerToys.Awake.exe -t <seconds>` is launched. Such an instance
-   calls `AllocConsole()` (Awake behavior when started without a PID binding),
-   so the plugin hides its console window in the background.
+The running instance is identified by process name; its command line (via
+`NtQueryInformationProcess`) is checked for `-c`/`--use-pt-config` to tell a
+runner-managed instance apart from a manually started one. A manually started
+instance (with its own console window) can't be steered through the file:
+`caff off` kills it, `caff on`/`caff <time>` ask you to close it first.
 
-`PowerToys.Awake.exe` is found from the running process's path, or by scanning
-`%LOCALAPPDATA%\Microsoft\PowerToys\<version>\` and
-`C:\Program Files\PowerToys\<version>\` (highest version wins).
+**One-time setup:** the Awake module must be enabled in PowerToys
+(PowerToys Settings → Awake → *Enable Awake*, or the Awake tray icon →
+Enable). If it isn't, `caff on`/`caff <time>` still run Caffeine and show a
+notification telling you to enable the module.
 
 ## Building (Linux cross-compile)
 
@@ -103,13 +104,14 @@ only), then produces:
 - **5 PM is fixed** at 17:00 local time (`EndHour` in `Main.cs` if you ever
   want a different end-of-shift).
 - `caff on` after 5pm targets **tomorrow's** 5pm (the result says so).
-- Caffeine's `-activefor` leaves the app in the tray *inactive* at 5pm —
-  `caff off` (or double-clicking the tray icon) removes it. Timed sessions
-  (`caff 1:30`) auto-exit the app instead.
-- If the Awake module is **disabled** in PowerToys, the plugin runs a
-  standalone Awake instance (console window auto-hidden). If you later enable
-  the module in the tray while that instance is running, the runner's own
-  launch will be rejected by Awake's single-instance mutex — run `caff off`
-  first, then re-enable the module.
-- Requires PowerToys v0.75+ for the Awake CLI (v0.100.x verified).
+- `caff off` deactivates Caffeine with `-appoff` — the app stays in the tray
+  (empty cup) and can be re-activated with `caff on` or by double-clicking
+  the tray icon. Timed sessions (`caff 1:30`) auto-exit the app instead.
+- The Awake part needs the **Awake module enabled** in PowerToys (one-time).
+  While it's disabled, the Awake side of `caff on`/`caff <time>` reports that
+  and Caffeine still works.
+- If you ever start `PowerToys.Awake.exe` manually from a terminal, `caff off`
+  kills that instance; `caff on` asks you to close it first.
+- Requires PowerToys v0.100.x+ (settings path and schema verified for
+  v0.100.x and v0.101.x).
 - Targets `net9.0-windows`; requires a .NET 9-era PowerToys (0.9x+).
