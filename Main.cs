@@ -5,6 +5,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 using Wox.Plugin;
 using Wox.Plugin.Logger;
 
@@ -441,7 +442,12 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
                 p.Mode = AwakeModeExpirable;
                 p.ExpirationDateTime = new DateTimeOffset(end);
             });
-            return ok ? null : "could not update the PowerToys Awake settings file";
+            if (!ok)
+            {
+                return "could not update the PowerToys Awake settings file";
+            }
+
+            return VerifyAwakeStillRunning(pid, "on");
         }
 
         // Awake "on for <duration>". Returns null on success, an error message otherwise.
@@ -465,7 +471,12 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
                 p.IntervalHours = (uint)duration.Hours;
                 p.IntervalMinutes = (uint)duration.Minutes;
             });
-            return ok ? null : "could not update the PowerToys Awake settings file";
+            if (!ok)
+            {
+                return "could not update the PowerToys Awake settings file";
+            }
+
+            return VerifyAwakeStillRunning(pid, "on");
         }
 
         // Awake "off". Returns null on success, an error message otherwise.
@@ -496,7 +507,44 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
             {
                 p.Mode = AwakeModePassive;
             });
-            return ok ? null : "could not update the PowerToys Awake settings file";
+            if (!ok)
+            {
+                return "could not update the PowerToys Awake settings file";
+            }
+
+            return VerifyAwakeStillRunning(pid, "off");
+        }
+
+        // Gives the instance a moment to react to the settings change, then checks
+        // that it is still running. Returns null when alive, a diagnostic message
+        // when it exited (its tray icon is gone until it starts again).
+        private static string VerifyAwakeStillRunning(int pid, string action)
+        {
+            if (pid == 0)
+            {
+                return null;
+            }
+
+            Thread.Sleep(1000);
+            if (ProcessAlive(pid))
+            {
+                return null;
+            }
+
+            return $"PowerToys Awake exited right after being set to {action} — its tray icon is gone until it starts again. This happens when the Awake module is disabled in PowerToys (enable it: Settings > Awake) or when the running instance was started manually (close its window and enable the module)";
+        }
+
+        private static bool ProcessAlive(int pid)
+        {
+            try
+            {
+                using Process p = Process.GetProcessById(pid);
+                return !p.HasExited;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         // --- Win32 interop ---

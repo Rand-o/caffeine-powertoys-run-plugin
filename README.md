@@ -76,6 +76,18 @@ window, and `caff on`/`caff <time>` ask you to close it first.
 Enable). If it isn't, `caff on`/`caff <time>` still run Caffeine and show a
 notification telling you to enable the module.
 
+**Tray icon:** while the module is enabled the Awake process never exits, so
+the tray icon is always visible (verified in the PowerToys source — the icon
+is only removed on process exit):
+
+- `caff on` / `caff <time>` → active icon (tooltip shows the expiry time or a
+  live countdown)
+- `caff off` → disabled (greyed) icon — still in the tray
+
+If you don't see it, Windows 11 likely parked it in the hidden-icons overflow
+(`^` next to the clock) — drag it out, or enable *PowerToys Awake* under
+Settings → Personalization → Taskbar → *Other system tray icons*.
+
 ## Building (Linux cross-compile)
 
 Prerequisite: .NET 9 SDK (`EnableWindowsTargeting` makes Windows the target
