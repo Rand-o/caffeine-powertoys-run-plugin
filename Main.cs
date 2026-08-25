@@ -14,18 +14,23 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
     /// "caff" — keeps the work laptop awake with two independent tools:
     ///
     ///  1. Caffeine (Zhorn Software, caffeine64.exe from the user's Music folder):
-    ///     - caff on      -> -activefor:&lt;minutes until 17:00&gt;  (active until 5pm)
-    ///     - caff &lt;time&gt;  -> -exitafter:&lt;minutes&gt;               (auto-exits after the duration)
-    ///     - caff off     -> -appoff                             (deactivates; app stays in tray, inactive)
+    ///     - caff on       -> -activefor:&lt;minutes until 17:00&gt;  (active until 5pm)
+    ///     - caff &lt;time&gt;   -> -exitafter:&lt;minutes&gt;               (auto-exits after the duration)
+    ///     - caff caff on  -> (no switch)                        (active indefinitely)
+    ///     - caff off      -> -appoff                            (deactivates; app stays in tray, inactive)
     ///     A running instance is always replaced (-replace) so the timer is reset.
     ///
     ///  2. PowerToys Awake — controlled exclusively by writing the Awake module's
     ///     settings file (the same channel PowerToys' own AwakeService uses).
     ///     Requires the Awake module to be enabled in PowerToys (one-time); the
     ///     plugin never launches or closes an Awake process:
-    ///         mode 3 (EXPIRABLE) + expirationDateTime  -> "on until 5pm"
-    ///         mode 2 (TIMED) + intervalHours/Minutes   -> "on for &lt;duration&gt;"
-    ///         mode 0 (PASSIVE)                         -> "off" (icon greys out)
+    ///         mode 1 (INFINITE)                           -> "on indefinitely" (caff awake on)
+    ///         mode 3 (EXPIRABLE) + expirationDateTime     -> "on until 5pm"
+    ///         mode 2 (TIMED) + intervalHours/Minutes      -> "on for &lt;duration&gt;"
+    ///         mode 0 (PASSIVE)                            -> "off" (icon greys out)
+    ///
+    ///  The two tools can also be turned on independently (caff awake on / caff
+    ///  caff on); caff off is the single off switch for both.
     ///     After each write the plugin verifies the Awake process is still alive
     ///     and reports why it exited if it is gone.
     /// </summary>
@@ -40,7 +45,7 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
 
         public string Name => "Caffeine";
 
-        public string Description => "Caffeine + PowerToys Awake: on until 5pm, off, or for a set duration";
+        public string Description => "Caffeine + PowerToys Awake: on until 5pm, on indefinitely, off, or for a set duration";
 
         public void Init(PluginInitContext context)
         {
@@ -83,6 +88,28 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
                         "Caffeine + Awake OFF",
                         "Deactivates Caffeine (app stays in tray, inactive) and turns PowerToys Awake off — Enter to deactivate",
                         () => DeactivateAll());
+
+                case "awake":
+                    if (parts.Length != 2 || parts[1].ToLowerInvariant() != "on")
+                    {
+                        return new List<Result> { Invalid("Usage: caff awake on — turn everything off with caff off") };
+                    }
+
+                    return Single(
+                        "PowerToys Awake ON (indefinite)",
+                        "Only Awake stays on until you run caff off (Caffeine untouched) — Enter to activate",
+                        () => AwakeOnlyOn());
+
+                case "caff":
+                    if (parts.Length != 2 || parts[1].ToLowerInvariant() != "on")
+                    {
+                        return new List<Result> { Invalid("Usage: caff caff on — turn everything off with caff off") };
+                    }
+
+                    return Single(
+                        "Caffeine ON (indefinite)",
+                        "Only Caffeine stays active until you run caff off (Awake untouched) — Enter to activate",
+                        () => CaffeineOnlyOn());
 
                 default:
                     if (parts.Length > 2)
@@ -169,6 +196,38 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
             _context.API.ShowMsg(
                 "Caffeine",
                 $"ON for {FormatDuration(duration)} until {DateTime.Now + duration:hh:mm tt} — Caffeine + PowerToys Awake");
+            return true;
+        }
+
+        // "caff caffein on": only Caffeine, active indefinitely (no timer switches).
+        private bool CaffeineOnlyOn()
+        {
+            string caffeineArgs = IsCaffeineRunning() ? "-replace" : string.Empty;
+            if (StartCaffeine(caffeineArgs) == null)
+            {
+                _context.API.ShowMsg("Caffeine", CaffeineError());
+                return false;
+            }
+
+            _context.API.ShowMsg(
+                "Caffeine",
+                "ON indefinitely — Caffeine only (PowerToys Awake untouched); run caff off to stop");
+            return true;
+        }
+
+        // "caff awake on": only PowerToys Awake, on indefinitely.
+        private bool AwakeOnlyOn()
+        {
+            string awakeError = AwakeOnInfinite();
+            if (awakeError != null)
+            {
+                _context.API.ShowMsg("Caffeine", awakeError);
+                return false;
+            }
+
+            _context.API.ShowMsg(
+                "Caffeine",
+                "ON indefinitely — PowerToys Awake only (Caffeine untouched); run caff off to stop");
             return true;
         }
 
@@ -267,6 +326,7 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
 
         // Awake settings-file modes (PowerToys AwakeMode enum).
         private const int AwakeModePassive = 0;
+        private const int AwakeModeInfinite = 1;
         private const int AwakeModeTimed = 2;
         private const int AwakeModeExpirable = 3;
 
@@ -390,6 +450,27 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
                 Log.Exception("Failed to write Awake settings file", e, typeof(Main));
                 return false;
             }
+        }
+
+        // Awake "on indefinitely". Returns null on success, an error message otherwise.
+        private static string AwakeOnInfinite()
+        {
+            int pid = GetAwakePid();
+            if (pid == 0)
+            {
+                return "PowerToys Awake is not running — enable the Awake module in PowerToys (Settings > Awake), then try again";
+            }
+
+            bool ok = UpdateAwakeSettings(p =>
+            {
+                p.Mode = AwakeModeInfinite;
+            });
+            if (!ok)
+            {
+                return "could not update the PowerToys Awake settings file";
+            }
+
+            return VerifyAwakeStillRunning(pid, "on");
         }
 
         // Awake "on until <end>". Returns null on success, an error message otherwise.
@@ -554,6 +635,8 @@ namespace Community.PowerToys.Run.Plugin.Caffeine
         private static List<Result> NoCommandHints() => new List<Result>
         {
             Hint("on", $"Caffeine + PowerToys Awake until {(EndHour > 12 ? EndHour - 12 : EndHour)}:00 PM (end of shift)"),
+            Hint("awake on", "Only PowerToys Awake, on indefinitely (off with caff off)"),
+            Hint("caff on", "Only Caffeine, on indefinitely (off with caff off)"),
             Hint("off", "Turn off Caffeine and PowerToys Awake"),
             Hint("1:30", "Keep both awake for a duration — 1:30 = 1h 30m, 2 = 2h")
         };

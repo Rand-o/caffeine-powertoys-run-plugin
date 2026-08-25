@@ -7,7 +7,8 @@ Keeps a work laptop awake with **two independent tools at once**:
   59 s so Windows never sleeps/locks)
 - **PowerToys Awake** (the PowerToys module that overrides system sleep)
 
-Both are turned on and off together by one keyword.
+Both are normally turned on and off together by one keyword, but each can
+also be turned on **independently** (the single `caff off` still stops both).
 
 ## Usage
 
@@ -17,7 +18,9 @@ Type in PowerToys Run (default shortcut `Alt+Space`):
 | --- | --- |
 | `caff` | Shows usage hints |
 | `caff on` | Caffeine + Awake active **until 5:00 PM** — no matter the current time (before 5pm → today, after 5pm → tomorrow). Caffeine is started if it isn't running, or its timer is reset if it is. |
-| `caff off` | Deactivates Caffeine (the app stays in the tray in its inactive state — it is **not** closed) and turns PowerToys Awake off (its session becomes inactive; the process keeps running and its tray icon greys out — the plugin **never** closes Awake). |
+| `caff awake on` | **Only** PowerToys Awake, on **indefinitely** (Caffeine untouched). |
+| `caff caff on` | **Only** Caffeine, active **indefinitely** (Awake untouched). |
+| `caff off` | Deactivates Caffeine (the app stays in the tray in its inactive state — it is **not** closed) and turns PowerToys Awake off (its session becomes inactive; the process keeps running and its tray icon greys out — the plugin **never** closes Awake). This is the off switch for everything, including the independent `on` commands. |
 | `caff 1:30` | Both active for **1 hour 30 minutes**, then stop on their own. |
 | `caff 2` | Both active for **2 hours** (a bare number is hours). |
 
@@ -33,6 +36,7 @@ A toast confirms every action; failures show a notification and leave Run open.
 | --- | --- |
 | `caff on` | `-activefor:<minutes until 17:00>` (app becomes inactive at 5pm; stays in tray) |
 | `caff <time>` | `-exitafter:<minutes>` (app auto-exits after the duration) |
+| `caff caff on` | *(no switch)* — the default: active indefinitely until deactivated |
 | `caff off` | `-appoff` (deactivates the running instance; the app stays in the tray, inactive) |
 
 If an instance is already running, `-replace` is added so the old instance is
@@ -53,6 +57,7 @@ the PowerToys v0.100.x source):
 - The plugin simply writes the file (preserving `keepDisplayOn` /
   `customTrayTimes` from the existing one):
   - `caff on` → `mode: 3` (EXPIRABLE) + `expirationDateTime` = 5:00 PM
+  - `caff awake on` → `mode: 1` (INFINITE) — on until `caff off`
   - `caff <time>` → `mode: 2` (TIMED) + `intervalHours` / `intervalMinutes`
   - `caff off` → `mode: 0` (PASSIVE)
 - **The plugin never launches or closes an Awake process.** If no
@@ -72,8 +77,8 @@ manually started instance doesn't watch the settings file.
 **Tray icon:** while the module is enabled the Awake process never exits, so
 the icon is always visible:
 
-- `caff on` / `caff <time>` → active icon (tooltip shows the expiry time or a
-  live countdown)
+- `caff on` / `caff awake on` / `caff <time>` → active icon (tooltip shows the
+  expiry time, a live countdown, or "indefinite")
 - `caff off` → disabled (greyed) icon — still in the tray
 
 If you don't see it, Windows 11 likely parked it in the hidden-icons overflow
@@ -112,6 +117,10 @@ only), then produces:
 - `caff off` deactivates Caffeine with `-appoff` — the app stays in the tray
   (empty cup) and can be re-activated with `caff on` or by double-clicking
   the tray icon. Timed sessions (`caff 1:30`) auto-exit the app instead.
+- The independent on-commands (`caff awake on` / `caff caff on`) leave the
+  other tool completely untouched — no settings write, no process start — and
+  both run indefinitely until `caff off`. If Caffeine is already running with
+  a timer, `caff caff on` replaces it with the indefinite instance.
 - The Awake part needs the **Awake module enabled** in PowerToys (one-time).
   While it's disabled, the Awake side of `caff on`/`caff <time>` reports that
   and Caffeine still works.

@@ -2,7 +2,7 @@
   "ID": "03B5849AB8264F58BC8817772EEBE19D",
   "Name": "Caffeine",
   "Type": "Plugin",
-  "Description": "Keep Caffeine and PowerToys Awake active until 5pm, turn them off, or run both for a set duration",
+  "Description": "Keep Caffeine and PowerToys Awake active until 5pm, on indefinitely, turn them off, or run both for a set duration",
   "Author": "admin",
   "Version": "1.0.0",
   "Language": "csharp",
